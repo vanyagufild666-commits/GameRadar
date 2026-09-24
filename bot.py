@@ -392,6 +392,11 @@ async def job_maintenance(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def post_init(app: Application) -> None:
+    # Реальный @username бота: ссылки-приглашения всегда ведут на этого бота,
+    # даже если в .env осталось старое/чужое значение BOT_USERNAME.
+    username = getattr(app.bot, "username", None)
+    if username:
+        config.BOT_USERNAME = username
     if app.job_queue:
         app.job_queue.run_repeating(job_maintenance, interval=3600, first=60)
 

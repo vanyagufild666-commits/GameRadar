@@ -65,6 +65,27 @@ def test_job_maintenance_registered_on_post_init(app):
     assert app.job_queue is not None, "для авто-паузы неактивных анкет нужен JobQueue"
 
 
+def test_post_init_uses_real_username_from_telegram():
+    """Ссылки-приглашения ведут на актуального бота, а не на устаревшее значение из .env."""
+    import asyncio
+
+    import config
+    old = config.BOT_USERNAME
+    config.BOT_USERNAME = "PartyRadarBot"  # имитируем старый .env
+    app = bot.build_application("123456789:TEST-TOKEN-FOR-WIRING-ONLY")
+
+    class FakeBot:
+        username = "Radar_GamerBot"
+
+    app.bot = FakeBot()
+    try:
+        asyncio.run(bot.post_init(app))
+        assert config.BOT_USERNAME == "Radar_GamerBot"
+        assert config.bot_link("ref_42") == "https://t.me/Radar_GamerBot?start=ref_42"
+    finally:
+        config.BOT_USERNAME = old
+
+
 def test_store_singleton_uses_configured_path(monkeypatch, tmp_path):
     import config
     monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "wiring.db"))
