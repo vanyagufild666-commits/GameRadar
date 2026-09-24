@@ -1,0 +1,31 @@
+[Unit]
+Description=PartyRadar Telegram bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=partyradar
+Group=partyradar
+WorkingDirectory=/opt/partyradar
+EnvironmentFile=/etc/partyradar/partyradar.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DB_PATH=/var/lib/partyradar/bot.db
+ExecStart=/usr/bin/python3 /opt/partyradar/bot.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+# Keep the service from writing outside the application and data paths.
+ReadWritePaths=/var/lib/partyradar
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target
