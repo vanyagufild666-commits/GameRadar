@@ -21,6 +21,7 @@ from ui.screens import Screen, is_url, screen_consent, screen_welcome
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 log = logging.getLogger("partyradar")
+CAPTION_LIMIT = 1024
 
 STORE: Store | None = None
 
@@ -50,19 +51,32 @@ def build_keyboard(rows: list[list[tuple[str, str]]] | None) -> InlineKeyboardMa
 
 
 # ── доставка экранов ─────────────────────────────────────────────────────────
+async def _ack(query, alert: str | None = None) -> None:
+    """Отвечает на нажатие ровно один раз: Telegram не даёт ответить дважды."""
+    try:
+        if alert:
+            await query.answer(alert[:200], show_alert=False)
+        else:
+            await query.answer()
+    except TelegramError:
+        pass
+
+
 async def deliver(query, screen: Screen) -> None:
     """Показывает экран: редактирует текущее сообщение, если это возможно."""
     text = (screen.text or "")[:4096]
+    # у подписи к фото/видео лимит строже текстового: 1024 против 4096
+    caption = (screen.text or "")[:CAPTION_LIMIT]
     kb = build_keyboard(screen.rows)
     msg = query.message
     try:
         if screen.photo:
             if msg.photo:
                 await query.edit_message_media(
-                    media=InputMediaPhoto(screen.photo, caption=text), reply_markup=kb)
+                    media=InputMediaPhoto(screen.photo, caption=caption), reply_markup=kb)
             else:
                 await msg.delete()
-                await msg.chat.send_photo(screen.photo, caption=text, reply_markup=kb)
+                await msg.chat.send_photo(screen.photo, caption=caption, reply_markup=kb)
         elif msg.photo:
             await msg.delete()
             await msg.chat.send_message(text, reply_markup=kb, disable_web_page_preview=True)
@@ -74,7 +88,7 @@ async def deliver(query, screen: Screen) -> None:
         log.warning("edit failed (%s), sending new message", exc)
         try:
             if screen.photo:
-                await msg.chat.send_photo(screen.photo, caption=text, reply_markup=kb)
+                await msg.chat.send_photo(screen.photo, caption=caption, reply_markup=kb)
             else:
                 await msg.chat.send_message(text, reply_markup=kb, disable_web_page_preview=True)
         except TelegramError as inner:
@@ -139,11 +153,7 @@ async def show(update: Update, context: ContextTypes.DEFAULT_TYPE, result: cb.Re
     query = update.callback_query
     if query:
         await deliver(query, result.screen)
-        if result.alert:
-            try:
-                await query.answer(result.alert[:200], show_alert=False)
-            except TelegramError:
-                pass
+        await _ack(query, result.alert)
     await run_effects(context.application, result.effects)
 
 
@@ -236,6 +246,7 @@ async def on_mod_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     parts = (query.data or "").split(":")
     if len(parts) != 3 or not parts[2].isdigit() or parts[1] not in {"suspend", "ban", "reject"}:
+        await _ack(query)
         return
     result = store().moderation_action(int(parts[2]), user["id"], parts[1])
     await query.answer("Готово" if result else "Жалоба уже обработана", show_alert=False)
@@ -245,10 +256,6 @@ async def on_mod_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # ── кнопки ───────────────────────────────────────────────────────────────────
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    try:
-        await query.answer()
-    except TelegramError:
-        pass
     user = _user(update)
     data = query.data or ""
 
@@ -258,32 +265,39 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if action == "about":
                 from ui.screens import screen_about
                 await deliver(query, screen_about())
+                await _ack(query)
                 return
             if action == "consent":
                 reg.give_consent(store(), user["id"])
                 await deliver(query, screen_welcome())
+                await _ack(query)
                 return
             if action == "exit":
                 await deliver(query, reg.exit_wizard(store(), user["id"]))
+                await _ack(query)
                 return
             if action == "start":
                 if not reg.has_consent(store(), user["id"]):
                     await deliver(query, screen_consent())
+                    await _ack(query)
                     return
                 await deliver(query, reg.start(store(), user["id"]))
+                await _ack(query)
                 return
             if action == "cancel":
                 # «Отмена» = выход из визарда, прогресс остаётся
                 await deliver(query, reg.exit_wizard(store(), user["id"]))
+                await _ack(query)
                 return
             if action == "publish":
                 screen, ok = reg.publish(store(), user["id"])
                 await deliver(query, screen)
+                await _ack(query, "Анкета опубликована \U0001f680" if ok else None)
                 if ok:
-                    await query.answer("Анкета опубликована 🚀", show_alert=False)
                     await run_effects(context.application, cb.referral_effects(store(), user["id"]))
                 return
             await deliver(query, reg.on_button(store(), user["id"], action, value))
+            await _ack(query)
             return
         if data.startswith("mod:"):
             await on_mod_callback(update, context)
